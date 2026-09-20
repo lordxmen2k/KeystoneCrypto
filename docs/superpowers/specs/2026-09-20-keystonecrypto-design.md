@@ -182,8 +182,9 @@ Version 0x01 is the only supported version. Future versions append; we never sil
 - `pydantic >= 2.5` — typed models, validation
 
 **Optional extras:**
-- `keystonecrypto[btc]`: adds `base58`, `bech32`, `ripemd-kernel` or similar
+- `keystonecrypto[btc]`: adds `base58`, `bech32`, and PSBT construction deps
 - `keystonecrypto[eth]`: adds `eth-utils`, `rlp` (or hand-rolled minimal encoder)
+- `keystonecrypto[sol]`: adds Solana transaction / RPC deps (`solana-py` or hand-rolled, TBD)
 - `keystonecrypto[network]`: adds `httpx` + `websockets` for chain RPC clients
 
 **Dev:**
@@ -224,7 +225,7 @@ Five test categories, run on every push:
 2. **BIP/RFC vector conformance** — every official vector passes.
 3. **Property-based** — round-trip mnemonic, round-trip keystore, derivation invariants.
 4. **Adversarial** — malformed input, downgrade attempts, garbage ciphertext, version mismatch.
-5. **Cross-implementation parity** — for each chain adapter, sign the same tx as a reference impl (`bitcoinjs-lib`, `ethers.js`) and compare signatures.
+5. **Cross-implementation parity** — for each chain adapter, sign the same tx as a reference impl (`bitcoinjs-lib` for BTC, `ethers.js` for ETH, `@solana/web3.js` for SOL) and compare signatures.
 
 Coverage floor: ≥ 95% line coverage for Layer 1–3. Layer 4–5: ≥ 85%.
 
@@ -254,7 +255,8 @@ KeystoneCrypto/
 │       ├── signing.py
 │       ├── secret_bytes.py       # Sensitive memory wrapper
 │       ├── btc/                  # extra: keystonecrypto[btc]
-│       └── eth/                  # extra: keystonecrypto[eth]
+│       ├── eth/                  # extra: keystonecrypto[eth]
+│       └── sol/                  # extra: keystonecrypto[sol]
 └── tests/
     ├── test_entropy.py
     ├── test_kdf.py
@@ -276,10 +278,14 @@ The implementation plan will respect this order. Earlier phases unlock testing o
 
 1. **Phase 1 — Foundations:** `SecretBytes`, entropy, KDF, AEAD envelope. Includes BIP-39 official vector tests.
 2. **Phase 2 — Mnemonic + HD derivation:** BIP-39, BIP-32, BIP-44 paths. Includes BIP-32 vector tests.
-3. **Phase 3 — Signing:** secp256k1 ECDSA + Schnorr, Ed25519. Includes RFC 8032 + secp256k1 test vectors.
+3. **Phase 3 — Signing:** secp256k1 ECDSA + Schnorr, Ed25519. Includes RFC 8032 + secp256k1 test vectors. Ed25519 is required at v1 to support the Solana adapter.
 4. **Phase 4 — Keystore end-to-end:** round-trip create → save → unlock → use → close. Includes adversarial tests.
 5. **Phase 5 — PyPI packaging:** build, twine check, publish workflow, signing.
-6. **Phase 6 — Chain adapters (extras):** BTC PSBT + Electrum, ETH typed data + RPC. Shipped as optional extras only.
+6. **Phase 6 — Chain adapters (extras):**
+   - 6a. BTC: PSBT (BIP-174) construction, SegWit v0/v1 (Taproot) signing inputs, Electrum client for broadcast + UTXO fetch.
+   - 6b. ETH: EIP-1559 + EIP-2930 + legacy tx, EIP-712 typed data, JSON-RPC client.
+   - 6c. SOL: Ed25519 transaction signing (already covered by Layer 3), Solana transaction format, RPC client.
+   - All chain-specific network code behind a `Network` protocol the user can substitute (test mocks, custom nodes, Tor proxies). Shipped as separate optional extras: `keystonecrypto[btc]`, `keystonecrypto[eth]`, `keystonecrypto[sol]`.
 
 ## 13. Open Questions for Reviewer
 
@@ -291,9 +297,9 @@ The implementation plan will respect this order. Earlier phases unlock testing o
 
 4. **Hardware-wallet integration** — out of v1. Probably a v3 feature if there's demand. Keep the signing layer clean enough that a Ledger adapter could slot in later.
 
-5. **License** — MIT, Apache 2.0, or BSL? My recommendation: MIT for max adoption; audit firm will want source-available long-term, but that's an org decision.
+5. **License** — ~~MIT, Apache 2.0, or BSL?~~ **Apache 2.0**. Provides explicit patent grant, which matters for a security library where contributors may hold patents on signature or KDF improvements.
 
-6. **Initial chain scope** — BTC + ETH, or just BTC for v1? My recommendation: BTC only in the core plan; ETH as a second chain adapter to validate the adapter pattern. Don't ship both at the same time.
+6. **Initial chain scope** — ~~BTC + ETH, or just BTC for v1?~~ **BTC, ETH, and Solana, all three at v1.** This validates the adapter pattern with three meaningfully different chains: secp256k1-ECDSA (BTC, ETH) and Ed25519 (Solana). Each ships as a separate extra: `keystonecrypto[btc]`, `keystonecrypto[eth]`, `keystonecrypto[sol]`. Users opt in to whichever they need.
 
 7. **Documentation site** — Read the Docs / MkDocs / GitHub Pages? My recommendation: keep docs in `docs/` with MkDocs Material; defer a custom site until after v1.
 
