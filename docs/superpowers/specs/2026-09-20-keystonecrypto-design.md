@@ -297,6 +297,34 @@ The implementation plan will respect this order. Earlier phases unlock testing o
 
 7. **Documentation site** — Read the Docs / MkDocs / GitHub Pages? My recommendation: keep docs in `docs/` with MkDocs Material; defer a custom site until after v1.
 
+8. **Post-quantum / lattice signatures** — confirm: v1 stays on ECDSA/secp256k1 + Ed25519 (current ecosystem standard). Post-quantum migration deferred until BIP/IETF standards for PQ HD wallets exist and chains accept PQ signatures. See §14.
+
+---
+
+## 14. Quantum Considerations
+
+**v1 is not quantum-safe against a cryptographically-relevant quantum computer (CRQC).** This is deliberate and matches every other HD wallet library shipping today.
+
+### Why v1 stays on ECDSA/secp256k1 + Ed25519
+
+- No finalized BIP or IETF standard exists for HD wallets over post-quantum signature schemes (CRYSTALS-Dilithium, FALCON-512, SPHINCS+).
+- No major chain (BTC, ETH, SOL, etc.) verifies PQ signatures today. Even if `keystonecrypto` could generate Dilithium keys, no UTXO could be spent with them.
+- BIP-32 derivation (HMAC-SHA512 chain code, CKDpriv/CKDpub) and BIP-39 entropy encoding are ECDSA-shaped; reusing them for PQ schemes without a standard would produce non-interoperable wallets.
+- "Quantum-resistant wallet" product marketing is generally a placeholder for "we'll migrate you when standards land," not actual PQ cryptography.
+
+### Real quantum-era threats v1 users should understand
+
+1. **Public-key exposure after first spend.** Once a BTC address is spent from, its public key is on-chain. A future CRQC could derive the private key from that public key. **Mitigation: address rotation.** Never reuse addresses; treat every receive address as single-use. This is standard BIP-44 hygiene and is built into our derivation API.
+2. **Harvest-now, decrypt-later.** Adversaries can record today's encrypted traffic and public keys. For HD wallets this is narrow: seeds are derived from your BIP-39 entropy and never appear on-chain until broadcast. As long as the seed lives only in your keystore and you rotate addresses, exposure is bounded.
+3. **Symmetric primitives are already safe.** AES-256 (Grover's halves effective key strength to 128 bits — still infeasible), Argon2id (Grover's doesn't help against memory-hard KDFs), and SHA-2/SHA-3 are not meaningfully weakened by quantum computers at security levels we use.
+
+### Migration plan when the ecosystem catches up
+
+- **Signer abstraction in Layer 3** means new signature schemes slot in without rewriting derivation, mnemonic, or keystore code.
+- We will track the IETF CFRG work on PQ HD wallets and the BIP editor's queue for any "BIP-39-style" PQ mnemonic proposals.
+- When chains ship PQ address types (analogous to how SegWit/Taprot rolled out), we will add chain adapters that derive PQ keys from existing seeds where possible, or from parallel PQ mnemonics where not.
+- Until then, the security-critical advice for users is unchanged: **rotate addresses, keep your keystore offline, use a strong passphrase.**
+
 ---
 
 **Reviewer:** please flag any section that needs more detail, any decision in §13 you want changed, or any missing requirement. Once approved, I'll write the implementation plan under `docs/superpowers/plans/`.
