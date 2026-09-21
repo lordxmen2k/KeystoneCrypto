@@ -8,7 +8,6 @@ same libraries — no hand-rolled math.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
 
 from coincurve import PrivateKey, PublicKey
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -67,16 +66,30 @@ class Signature:
         raise SignatureError(f"unknown scheme {self.scheme!r}")
 
 
-class Signer(Protocol):
-    """Common signing interface."""
+class Signer:
+    """Abstract base class for signers.
 
-    def sign(self, message: bytes) -> Signature: ...
-    def public_key_bytes(self) -> bytes: ...
+    Subclasses MUST set `scheme` (a string), and implement
+    `public_key_bytes()` and `sign(message)`.
+
+    Note: this used to be a `typing.Protocol`, but pydantic v2 cannot
+    use a Protocol as a model field type (pydantic-core's is-instance
+    validator rejects non-class types). Making it a concrete ABC with
+    @abstractmethod is the pydantic-compatible shape.
+    """
+
+    scheme: str  # subclasses set this
+
+    def sign(self, message: bytes) -> Signature:
+        raise NotImplementedError
+
+    def public_key_bytes(self) -> bytes:
+        raise NotImplementedError
 
 
 # ---- secp256k1 ECDSA ----
 
-class Secp256kSigner:
+class Secp256kSigner(Signer):
     """ECDSA over secp256k1, signatures in 64-byte (r || s) compact form."""
 
     scheme = "ecdsa-secp256k1"
@@ -97,7 +110,7 @@ class Secp256kSigner:
         return Signature(self.scheme, r + s, self.public_key_bytes())
 
 
-class Secp256kSchnorrSigner:
+class Secp256kSchnorrSigner(Signer):
     """BIP-340 Schnorr signatures over secp256k1 (Taproot key-path spends)."""
 
     scheme = "schnorr-secp256k1"
@@ -120,7 +133,7 @@ class Secp256kSchnorrSigner:
 
 # ---- Ed25519 ----
 
-class Ed25519Signer:
+class Ed25519Signer(Signer):
     """RFC 8032 Ed25519. Used by Solana."""
 
     scheme = "ed25519"
