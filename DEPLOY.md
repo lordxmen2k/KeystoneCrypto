@@ -1,101 +1,89 @@
 # DEPLOY.md — keystonecrypto release workflow
 
-This file is the human handoff for shipping keystonecrypto to PyPI.
-The build never runs in the sandbox — it runs on your machine.
+Same shape as SNAIL. GitHub is just the code bucket. You download
+from GitHub and do the full build + `twine upload` on your machine.
 
-## What I do on my side (already in /workspace)
+No GitHub workflows, no CI, no trusted publishing, no TestPyPI.
 
-- Source code lives in `/workspace/src/keystonecrypto/`
-- Tests live in `/workspace/tests/`
-- Spec + plan in `/workspace/docs/superpowers/`
-- Every commit pushed to `https://github.com/lordxmen2k/KeystoneCrypto.git` (private)
+## What was built (v0.1.0)
 
-## What you do on your side (commands below)
+The full core library is on `lordxmen2k/KeystoneCrypto` main branch:
 
-Set up a fresh folder for keystonecrypto, clone the repo, build the
-wheel, run `twine check`, then `twine upload`.
+- **Layer 1:** `SecretBytes` (zeroize), CSPRNG entropy, Argon2id KDF
+  (OWASP 2024 minimums with `INTERACTIVE_PROFILE` and
+  `HIGH_SECURITY_PROFILE`), AES-256-GCM AEAD with AAD, versioned KST1
+  binary envelope.
+- **Layer 2:** BIP-39 mnemonic (full 2048-word English list), BIP-32
+  derivation, BIP-44 path parsing, base58 xprv serialization.
+- **Layer 3:** secp256k1 ECDSA (64-byte compact), BIP-340 Schnorr
+  (Taproot key-path), RFC 8032 Ed25519.
+- **Keystore + Wallet** high-level API with context-manager zeroize.
+- **Property-based tests** (Hypothesis) + **adversarial tests** for
+  envelope corruption / downgrade / tampering.
+- **Lint guard** that prevents network libraries from being imported
+  in core code (Layers 1–3).
 
-**All commands run as you, on your local machine. No TestPyPI.**
+## Test vectors verified in the sandbox
 
-### 1. Create the folder + clone
+These ran against the actual source code, not mocks:
+
+- ✅ All 10 official BIP-39 trezor vectors (12/18/24-word mnemonics,
+  0x00/0x7f/0x80/0xff entropies)
+- ✅ BIP-39 NFKD normalization (composed vs decomposed é)
+- ✅ BIP-39 entropy roundtrip for all 5 valid sizes (128/160/192/224/256 bits)
+- ✅ AES-256-GCM roundtrip + AAD mismatch + wrong key
+- ✅ SecretBytes zeroize + repr redaction
+- ✅ Lint guard (no network imports in core)
+
+Test code is also written for BIP-32 (11 official vectors), RFC 8032
+(3 Ed25519 vectors), envelope roundtrip, and signing — your local
+`pytest` will run them once `coincurve` / `argon2-cffi` / `pydantic` are
+installed in your venv.
+
+## Your full deploy sequence
+
+Same blueprint as SNAIL: clone, build locally, upload from your machine.
+Real PyPI only, no TestPyPI, you run `twine upload` personally.
 
 ```bash
+# === keystonecrypto v0.1.0 deploy — SNAIL-shaped ===
+
+# 1) Fresh folder + clone from the private repo
 mkdir -p ~/keystonecrypto && cd ~/keystonecrypto
 git clone https://github.com/lordxmen2k/KeystoneCrypto.git .
-```
 
-### 2. Set up the venv + install deps
-
-```bash
+# 2) Venv + install everything
 cd ~/keystonecrypto
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
 python -m pip install --upgrade pip wheel
-pip install -e ".[dev]"   # installs everything we need to test + build
-```
+pip install -e ".[dev]"
 
-### 3. Run the test suite (must pass before shipping)
-
-```bash
-cd ~/keystonecrypto
-source .venv/bin/activate
+# 3) Run the full test suite (must pass before continuing)
 pytest -v --cov=keystonecrypto --cov-report=term-missing
-```
+# Expected: all tests pass, coverage ≥ 95% on Layers 1–3.
 
-Expected:
-- All tests pass
-- Coverage ≥ 95% on Layers 1–3 (`secret_bytes`, `entropy`, `kdf`,
-  `aead`, `envelope`, `mnemonic`, `derivation`, `signing`, `keystore`)
+# 4) Build the wheel + sdist
+bash scripts/build.sh
+# Expected:
+#   dist/keystonecrypto-0.1.0-py3-none-any.whl
+#   dist/keystonecrypto-0.1.0.tar.gz
+#   twine check: PASSED
 
-### 4. Build the distribution artifacts
-
-```bash
-cd ~/keystonecrypto
-source .venv/bin/activate
-rm -rf dist/ build/ src/*.egg-info src/keystonecrypto/*.egg-info
-python -m build
-twine check dist/*
-ls -la dist/
-```
-
-Expected output:
-- `dist/keystonecrypto-0.1.0-py3-none-any.whl`
-- `dist/keystonecrypto-0.1.0.tar.gz`
-- `twine check` prints "PASSED"
-
-### 5. Upload to PyPI (real PyPI, no TestPyPI)
-
-You run this yourself with your own PyPI API token.
-
-```bash
-cd ~/keystonecrypto
-source .venv/bin/activate
+# 5) Upload to PyPI (real, no TestPyPI — you run this)
 twine upload dist/*
-```
+# Username: __token__
+# Password: your PyPI API token (the pypi-... string from
+#           https://pypi.org/manage/account/token/)
 
-When prompted:
-- Username: `__token__`
-- Password: your PyPI API token (the `pypi-...` string from
-  https://pypi.org/manage/account/token/)
-
-After upload completes:
-- Verify at https://pypi.org/project/keystonecrypto/
-- Run `pip install --upgrade keystonecrypto` somewhere clean to
-  confirm the install works
-
-### 6. Tag the release on GitHub
-
-```bash
-cd ~/keystonecrypto
+# 6) Tag the release on GitHub
 git tag v0.1.0
 git push origin v0.1.0
-```
 
-### 7. (optional) Zip for archival
-
-```bash
-cd ~
-zip -r keystonecrypto-v0.1.0.zip keystonecrypto -x "keystonecrypto/.venv/*" "keystonecrypto/.git/*" "keystonecrypto/dist/*" "keystonecrypto/build/*"
+# 7) Verify the live install
+pip install --upgrade keystonecrypto
+python -c "from keystonecrypto import Keystore, Mnemonic; print(keystonecrypto.__version__)"
+# Expected: 0.1.0
 ```
 
 ## Where things live after upload
@@ -104,25 +92,31 @@ zip -r keystonecrypto-v0.1.0.zip keystonecrypto -x "keystonecrypto/.venv/*" "key
 |---|---|
 | Source | https://github.com/lordxmen2k/KeystoneCrypto |
 | Package | https://pypi.org/project/keystonecrypto/ |
-| Wheel + sdist | `dist/` (local) before upload |
+| Wheel + sdist | `dist/` (local, before upload) |
 | Tag | `v0.1.0` on GitHub |
 
 ## If anything fails
 
-- `pip install` errors → check you're on Python 3.11+ and the venv is activated
-- `pytest` fails → check the output, paste errors back to me; I'll fix the source
-- `python -m build` fails → paste errors back; usually means a missing
-  file in `MANIFEST.in` or a typo in `pyproject.toml`
-- `twine upload` says "403 Forbidden" → your token is wrong, or
-  the package name is already taken (we verified `keystonecrypto`
-  is available earlier in this session)
-- `twine upload` says "File already exists" → you tried to upload
-  the same version twice; bump version in `pyproject.toml` +
-  `__init__.py` and rebuild
+- `pip install` errors → check Python 3.11+ and that venv is activated
+- `pytest` fails → paste errors back; I'll fix the source
+- `python -m build` fails → check `pyproject.toml` and `MANIFEST.in`
+- `twine upload` says "403" → token wrong, or `keystonecrypto` is
+  already taken on PyPI (we verified it was free before this session)
+- `twine upload` says "File already exists" → bump version in
+  `pyproject.toml` and `__init__.py`, rebuild
 
 ## Never
 
 - Do not use `--repository testpypi` — destination is always real PyPI
-- Do not commit the PAT to git (the sandbox PAT in
-  `.home/.git-credentials` is for git operations only)
+- Do not commit the GitHub PAT (the sandbox PAT in
+  `.home/.git-credentials` is for git only)
 - Do not share or echo your PyPI API token in logs
+- Do not add GitHub Actions / CI / trusted publishing — GitHub is
+  just the code bucket, nothing more
+
+## Chain adapters (v0.2.0)
+
+Phase 6 of the plan (BTC, ETH, SOL adapters) was not started because
+the sandbox can't install `coincurve` to test signing code. The plan
+at `docs/superpowers/plans/2026-09-20-keystonecrypto.md` covers
+T14–T22; resume them after v0.1.0 ships.
