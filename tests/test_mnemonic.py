@@ -13,10 +13,14 @@ from tests.vectors.bip39_vectors import BIP39_VECTORS, Bip39Vector
 
 @pytest.mark.parametrize("vec", BIP39_VECTORS, ids=lambda v: f"words-{len(v.mnemonic.split())}")
 def test_bip39_seed_matches_official_vectors(vec: Bip39Vector) -> None:
-    """Each official vector's mnemonic must yield the documented seed."""
+    """Each official vector's mnemonic must yield the documented seed.
+
+    Trezor vectors use passphrase "TREZOR" for every vector (per BIP-39
+    spec convention). Empty-passphrase tests live in separate unit tests.
+    """
     m = Mnemonic.from_phrase(vec.mnemonic)
     assert bytes(m.entropy).hex() == vec.entropy_hex
-    seed = m.seed(passphrase="")
+    seed = m.seed(passphrase=vec.passphrase)
     assert bytes(seed).hex() == vec.seed_hex
 
 
@@ -110,3 +114,23 @@ def test_phrase_roundtrip_via_from_phrase() -> None:
     )
     m = Mnemonic.from_phrase(p)
     assert m.phrase == p
+
+
+def test_empty_passphrase_zero_entropy_seed() -> None:
+    """Canonical BIP-39 zero-entropy seed with empty passphrase.
+
+    Not in the Trezor test set (which uses 'TREZOR' for every vector).
+    Independently verifiable by hand against the BIP-39 algorithm.
+    """
+    m = Mnemonic.from_phrase(
+        "abandon abandon abandon abandon abandon abandon "
+        "abandon abandon abandon abandon abandon about"
+    )
+    s = m.seed(passphrase="")
+    # Compute the expected value directly with stdlib.
+    import hashlib
+    import unicodedata
+    salt = unicodedata.normalize("NFKD", "mnemonic").encode("utf-8")
+    password = unicodedata.normalize("NFKD", m.phrase).encode("utf-8")
+    expected = hashlib.pbkdf2_hmac("sha512", password, salt, 2048, dklen=64)
+    assert bytes(s) == expected

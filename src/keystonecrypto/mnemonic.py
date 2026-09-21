@@ -2063,6 +2063,13 @@ _WORD_TO_INDEX: dict[str, int] = {w: i for i, w in enumerate(_ENGLISH_WORDLIST)}
 __all__ = ["Mnemonic"]
 
 
+# ---- exception imports (top-level so the class can reference them) ----
+
+from keystonecrypto.exceptions import (  # noqa: E402
+    InvalidMnemonicError,
+)
+
+
 def _normalize(p: str) -> str:
     import unicodedata
     return unicodedata.normalize("NFKD", p)
@@ -2106,13 +2113,15 @@ class Mnemonic:
 
         # Reconstruct entropy + checksum.
         bits = "".join(f"{i:011b}" for i in indices)
-        checksum_bits = len(words) * 11 // 33  # CS = ENT/32 bits
+        checksum_bits = len(words) * 11 // 33  # CS = ENT / 32 bits
         ent_bits = bits[:-checksum_bits]
         cs_bits = bits[-checksum_bits:]
         ent_bytes = int(ent_bits, 2).to_bytes(len(ent_bits) // 8, "big")
-        expected_cs = hashlib.sha256(ent_bytes).digest()[:checksum_bits]
-        actual_cs = int(cs_bits, 2).to_bytes(checksum_bits, "big")
-        if expected_cs != actual_cs:
+        # The checksum is the FIRST `checksum_bits` BITS of SHA256(entropy).
+        # We compare it as a bit string against the trailing `checksum_bits`
+        # of the concatenated word-indices bit string.
+        expected_cs_bits = bin(int.from_bytes(hashlib.sha256(ent_bytes).digest(), "big"))[2:].zfill(256)[:checksum_bits]
+        if expected_cs_bits != cs_bits:
             raise InvalidMnemonicError("invalid checksum")
 
         return cls(normalized_phrase)
@@ -2126,8 +2135,9 @@ class Mnemonic:
         ent = bytes(entropy)
         bits = bin(int.from_bytes(ent, "big"))[2:].zfill(len(ent) * 8)
         checksum_bits = len(ent) * 8 // 32
-        cs = hashlib.sha256(ent).digest()[:checksum_bits]
-        all_bits = bits + bin(int.from_bytes(cs, "big"))[2:].zfill(checksum_bits)
+        # Append the FIRST `checksum_bits` BITS of SHA256(entropy).
+        cs_bits = bin(int.from_bytes(hashlib.sha256(ent).digest(), "big"))[2:].zfill(256)[:checksum_bits]
+        all_bits = bits + cs_bits
         words = [_ENGLISH_WORDLIST[int(all_bits[i:i + 11], 2)]
                  for i in range(0, len(all_bits), 11)]
         return cls(" ".join(words))
@@ -2152,18 +2162,26 @@ class Mnemonic:
     def seed(self, passphrase: str = "") -> "SecretBytes":
         """Derive the 64-byte BIP-39 seed.
 
-        The passphrase is NFKD-normalized and concatenated with the
-        mnemonic as `mnemonic + "mnemonic" + passphrase` per BIP-39.
+        Per BIP-39:
+          password = NFKD(mnemonic)
+          salt     = NFKD("mnemonic" + passphrase)
+          seed     = PBKDF2-HMAC-SHA512(password, salt, 2048 iterations, 64 bytes)
         """
         import hashlib
         from keystonecrypto.secret_bytes import SecretBytes
         from keystonecrypto.exceptions import InvalidPassphraseError
         try:
-            normalized_pw = _normalize(passphrase).encode("utf-8")
+            normalized_mnemonic = _normalize(self._phrase).encode("utf-8")
+            normalized_salt = _normalize("mnemonic" + passphrase).encode("utf-8")
         except UnicodeError as e:
             raise InvalidPassphraseError(f"passphrase not valid UTF-8: {e}") from e
-        password = (self._phrase + "mnemonic").encode("utf-8") + _normalize(passphrase).encode("utf-8")
-        raw = hashlib.pbkdf2_hmac("sha512", password, normalized_pw, 2048, dklen=64)
+        raw = hashlib.pbkdf2_hmac(
+            "sha512",
+            normalized_mnemonic,
+            normalized_salt,
+            2048,
+            dklen=64,
+        )
         return SecretBytes(raw)
 
     def __repr__(self) -> str:
