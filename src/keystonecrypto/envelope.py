@@ -92,7 +92,11 @@ class Envelope:
 
     @staticmethod
     def _unpack_kdf_params(blob: bytes) -> Argon2Params:
-        (t, m, par, hl, v) = struct.unpack(">IIIII", blob)
+        # Matches `_pack_kdf_params`: 5 unsigned ints (20 bytes) + 12 bytes reserved.
+        # Total 32 bytes.
+        if len(blob) != 32:
+            raise KeystoreDecryptionError(f"kdf_params section wrong size: {len(blob)} bytes")
+        (t, m, par, hl, v) = struct.unpack(">IIIII 12x", blob)
         return Argon2Params.for_testing(
             time_cost=t, memory_cost=m, parallelism=par,
             hash_len=hl, salt_len=16, version=v,
@@ -164,8 +168,6 @@ class Envelope:
             )
 
         kdf_id = blob[_OFF_KDF_ID]
-        if kdf_id != 1:
-            raise KeystoreVersionError(f"unsupported kdf_id {kdf_id}")
 
         params = Envelope._unpack_kdf_params(blob[_OFF_KDF:_OFF_KDF + 32])
         if params.hash_len != _GCM_TAG_LEN + _GCM_TAG_LEN:
@@ -174,6 +176,10 @@ class Envelope:
         nonce = blob[_OFF_NONCE:_OFF_NONCE + NONCE_LEN]
         ciphertext = blob[_HEADER_LEN:]
 
+        # kdf_id bound into the AAD so tampering causes AEAD failure
+        # (KeystoreDecryptionError), not an early format rejection.
+        # We still surface an unsupported-kdf_id error if AEAD happens
+        # to succeed somehow (e.g. crafted blob).
         key, _ = derive_key(password, params, salt=salt)
 
         try:
@@ -181,6 +187,9 @@ class Envelope:
                                  aad=Envelope._aad(version, kdf_id))
         except KeystoreDecryptionError:
             raise
+
+        if kdf_id != 1:
+            raise KeystoreVersionError(f"unsupported kdf_id {kdf_id}")
 
         return Envelope._unpack_plaintext(plaintext)
 

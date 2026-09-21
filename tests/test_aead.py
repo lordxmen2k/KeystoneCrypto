@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from keystonecrypto.aead import KEY_LEN, NONCE_LEN, decrypt, encrypt
-from keystonecrypto.exceptions import KeystoneCryptoError
+from keystonecrypto.exceptions import KeystoreDecryptionError
 from keystonecrypto.secret_bytes import SecretBytes
 
 
@@ -24,7 +24,7 @@ def test_roundtrip_with_aad() -> None:
 def test_aad_mismatch_fails() -> None:
     key = SecretBytes.random(KEY_LEN)
     nonce, ct = encrypt(key, b"payload", aad=b"context-v1")
-    with pytest.raises(KeystoneCryptoError):
+    with pytest.raises(KeystoreDecryptionError):
         decrypt(key, nonce, ct, aad=b"context-v2")
 
 
@@ -33,7 +33,7 @@ def test_tampered_ciphertext_fails() -> None:
     nonce, ct = encrypt(key, b"payload")
     tampered = bytearray(ct)
     tampered[0] ^= 0x01
-    with pytest.raises(KeystoneCryptoError):
+    with pytest.raises(KeystoreDecryptionError):
         decrypt(key, nonce, bytes(tampered))
 
 
@@ -41,7 +41,7 @@ def test_wrong_key_fails() -> None:
     k1 = SecretBytes.random(KEY_LEN)
     k2 = SecretBytes.random(KEY_LEN)
     nonce, ct = encrypt(k1, b"payload")
-    with pytest.raises(KeystoreCryptoError):
+    with pytest.raises(KeystoreDecryptionError):
         decrypt(k2, nonce, ct)
 
 

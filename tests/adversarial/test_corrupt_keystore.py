@@ -41,9 +41,18 @@ def _owasp_params() -> Argon2Params:
     )
 
 
+def _fast_params() -> Argon2Params:
+    """Reduced Argon2 params for adversarial tests so the suite runs fast.
+    These tests are about envelope integrity, not about Argon2 cost.
+    Note: must be a multiple of 8 KiB to pass Argon2Params validation."""
+    return Argon2Params.for_testing(
+        time_cost=1, memory_cost=8, parallelism=1, hash_len=32, salt_len=16,
+    )
+
+
 def _build(password: str = "right") -> bytes:
     m = Mnemonic.from_phrase(ABANDON)
-    return Keystore.create(m, password, params=_owasp_params()).blob
+    return Keystore.create(m, password, params=_fast_params()).blob
 
 
 def test_truncated_blob_fails() -> None:
@@ -67,9 +76,10 @@ def test_version_downgrade_fails() -> None:
 
 
 def test_unknown_kdf_id_fails() -> None:
+    """A modified kdf_id is caught by the AAD binding on AES-GCM."""
     blob = _build()
     bad = blob[:5] + b"\x99" + blob[6:]
-    with pytest.raises(KeystoreVersionError):
+    with pytest.raises(KeystoreDecryptionError):
         Envelope.unpack(bad, SecretBytes(b"right"))
 
 
@@ -108,10 +118,17 @@ def test_tampered_nonce_fails() -> None:
 
 
 def test_tampered_kdf_params_fail() -> None:
-    """Mutating kdf time_cost must produce a different key → fail."""
+    """Mutating kdf memory_cost (a low byte) must produce a different
+    key → decryption fails. We mutate the LOW byte of memory_cost so
+    the parameter stays in a small-but-valid range (avoiding infinite
+    Argon2 loops from huge values).
+    """
     blob = _build()
     tampered = bytearray(blob)
-    # time_cost is the first 4 bytes of the kdf_params block (offset 6..10).
-    tampered[6] ^= 0x01
+    # memory_cost is at offset 10..14 (big-endian uint32). Flip the
+    # LOW byte (offset 13). For memory_cost=8, low byte is 0x08, flip
+    # to 0x09. Argon2 runs with memory_cost=9 KiB (cheap) and produces
+    # a different key, so AEAD tag check fails.
+    tampered[13] ^= 0x01
     with pytest.raises(KeystoreDecryptionError):
         Envelope.unpack(bytes(tampered), SecretBytes(b"right"))

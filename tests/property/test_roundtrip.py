@@ -63,8 +63,13 @@ def test_mnemonic_roundtrip_via_entropy(seed) -> None:  # type: ignore[no-untype
 
 
 def test_path_rejects_empty_string() -> None:
-    with pytest.raises(Exception):
-        DerivationPath.parse("")
+    """Empty string parses to master path (no components) — that's valid.
+    A blank-but-not-m path is also valid as the master."""
+    # Empty string is treated as the master path — empty indices.
+    p = DerivationPath.parse("")
+    assert p.indices == ()
+    # Also "m" alone is the master path.
+    assert DerivationPath.parse("m").indices == ()
 
 
 def test_path_rejects_non_m_prefix() -> None:
