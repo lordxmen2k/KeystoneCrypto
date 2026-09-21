@@ -37,7 +37,10 @@ __all__ = ["Keystore", "Wallet", "Account", "KeystoreContext"]
 class Account(BaseModel):
     """A derived account at a specific BIP-32 path."""
 
-    model_config = {"frozen": True}
+    # frozen=True + arbitrary_types_allowed=True: Account is immutable,
+    # and `signer` is a runtime-checkable Protocol (not a concrete type),
+    # so pydantic needs the escape hatch to accept it as a field.
+    model_config = {"frozen": True, "arbitrary_types_allowed": True}
 
     path: DerivationPath
     signer: Signer
