@@ -54,8 +54,18 @@ git clone https://github.com/lordxmen2k/KeystoneCrypto.git .
 
 # 2) Venv + install everything
 cd ~/keystonecrypto
-python3 -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+
+# IMPORTANT: use Python 3.12 or 3.13 — coincurve has no prebuilt wheels
+# for Python 3.14 yet (it would force a source build that needs Visual
+# Studio Build Tools on Windows). Easiest on Windows:
+py -3.13 -m venv .venv
+# On macOS / Linux:
+# python3.13 -m venv .venv
+
+# Activate. Git Bash on Windows uses Scripts/ (NOT bin/):
+source .venv/Scripts/activate      # Git Bash on Windows
+# source .venv/bin/activate        # macOS / Linux
+
 python -m pip install --upgrade pip wheel
 pip install -e ".[dev]"
 
@@ -85,6 +95,16 @@ pip install --upgrade keystonecrypto
 python -c "from keystonecrypto import Keystore, Mnemonic; print(keystonecrypto.__version__)"
 # Expected: 0.1.0
 ```
+
+## Windows + Git Bash notes
+
+- `python3` is not aliased on Windows. Use `python` (your default, which
+  is currently 3.14), or `py -3.13` to target a specific version, or
+  `py -3.12`. The `py` launcher is the cleanest way to pick a version.
+- Git Bash on Windows activates the venv via `source .venv/Scripts/activate`,
+  not `source .venv/bin/activate`. The latter is for macOS/Linux.
+- `coincurve` ships prebuilt wheels only for cp310/cp311/cp312/cp313.
+  Python 3.14 has no wheel — stay on 3.13 or 3.12 for v0.1.0.
 
 ## Where things live after upload
 
