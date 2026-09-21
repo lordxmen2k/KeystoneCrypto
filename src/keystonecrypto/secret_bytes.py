@@ -9,13 +9,19 @@ Security notes:
   interning can leave copies. Do not rely on this for hot-path secrecy.
 - Never pass raw bytes through repr/print/log — use the SecretBytes
   wrapper so accidental logging is redacted.
+
+Pydantic integration:
+- Implements `__get_pydantic_core_schema__` so SecretBytes can be used
+  directly as a field type in pydantic models. SecretBytes is validated
+  (input must be `bytes`/`bytearray`, never empty) and serialized to its
+  raw bytes value.
 """
 
 from __future__ import annotations
 
 import hmac
 import secrets as _secrets
-from typing import Self
+from typing import Any, Self
 
 __all__ = ["SecretBytes"]
 
@@ -86,3 +92,44 @@ class SecretBytes:
 
     def __repr__(self) -> str:
         return f"<SecretBytes len={len(self._buf)} redacted>"
+
+    # ---- pydantic v2 integration ----
+
+    @classmethod
+    def __get_pydantic_core_schema__(cls, source_type, handler):  # type: ignore[no-untyped-def]
+        """Tell pydantic-core how to validate and serialize SecretBytes.
+
+        Validation: accept bytes/bytearray, enforce non-empty.
+        Serialization: emit raw bytes.
+        """
+        from pydantic_core import SchemaSerializer, SchemaValidator, core_schema
+
+        def validate(value: Any) -> "SecretBytes":
+            if isinstance(value, SecretBytes):
+                return value
+            if not isinstance(value, (bytes, bytearray)):
+                raise TypeError(
+                    f"SecretBytes requires bytes or bytearray, got {type(value).__name__}"
+                )
+            if len(value) == 0:
+                raise ValueError("SecretBytes cannot be empty")
+            return cls(value)
+
+        def serialize(value: "SecretBytes") -> bytes:
+            return bytes(value)
+
+        # bytes_schema is the underlying pydantic-core type for `bytes`.
+        bytes_schema = core_schema.bytes_schema()
+        schema = core_schema.no_info_plain_validator_function(
+            validate,
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                serialize, return_schema=bytes_schema
+            ),
+        )
+        return core_schema.json_or_python_schema(
+            python_schema=schema,
+            json_schema=bytes_schema,
+            serialization=core_schema.plain_serializer_function_ser_schema(
+                serialize, return_schema=bytes_schema
+            ),
+        )
