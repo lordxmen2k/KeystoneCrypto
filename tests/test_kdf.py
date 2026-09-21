@@ -1,0 +1,109 @@
+"""KDF uses Argon2id with configurable parameters and passes RFC 9106 vectors."""
+
+from __future__ import annotations
+
+import pytest
+
+from keystonecrypto.kdf import (
+    Argon2Params,
+    HIGH_SECURITY_PROFILE,
+    INTERACTIVE_PROFILE,
+    OWASP_MIN_MEMORY_KIB,
+    OWASP_MIN_PARALLELISM,
+    OWASP_MIN_TIME_COST,
+    derive_key,
+)
+from keystonecrypto.secret_bytes import SecretBytes
+from tests.vectors.argon2_vectors import RFC9106_VECTORS
+
+
+def test_interactive_profile_is_owasp_minimum() -> None:
+    assert INTERACTIVE_PROFILE.time_cost >= OWASP_MIN_TIME_COST
+    assert INTERACTIVE_PROFILE.memory_cost >= OWASP_MIN_MEMORY_KIB
+    assert INTERACTIVE_PROFILE.parallelism >= OWASP_MIN_PARALLELISM
+
+
+def test_high_security_profile_stricter_than_interactive() -> None:
+    assert HIGH_SECURITY_PROFILE.memory_cost >= INTERACTIVE_PROFILE.memory_cost
+    assert HIGH_SECURITY_PROFILE.time_cost >= INTERACTIVE_PROFILE.time_cost
+
+
+def test_derive_key_returns_secretbytes_and_salt() -> None:
+    params = Argon2Params(
+        time_cost=OWASP_MIN_TIME_COST,
+        memory_cost=OWASP_MIN_MEMORY_KIB,
+        parallelism=OWASP_MIN_PARALLELISM,
+        hash_len=32,
+    )
+    pw = SecretBytes(b"hunter2hunter2hunter2hunter2")
+    key, salt = derive_key(pw, params)
+    assert isinstance(key, SecretBytes)
+    assert isinstance(salt, bytes)
+    assert len(key) == 32
+    assert len(salt) == params.salt_len
+
+
+def test_derive_key_different_salts_produce_different_keys() -> None:
+    params = Argon2Params(
+        time_cost=OWASP_MIN_TIME_COST,
+        memory_cost=OWASP_MIN_MEMORY_KIB,
+        parallelism=OWASP_MIN_PARALLELISM,
+        hash_len=32,
+    )
+    pw = SecretBytes(b"hunter2hunter2hunter2hunter2")
+    k1, _ = derive_key(pw, params)
+    k2, _ = derive_key(pw, params)
+    assert bytes(k1) != bytes(k2)
+
+
+def test_derive_key_same_inputs_same_outputs() -> None:
+    params = Argon2Params(
+        time_cost=OWASP_MIN_TIME_COST,
+        memory_cost=OWASP_MIN_MEMORY_KIB,
+        parallelism=OWASP_MIN_PARALLELISM,
+        hash_len=32,
+    )
+    pw = SecretBytes(b"hunter2hunter2hunter2hunter2")
+    salt = b"\xab" * 16
+    k1, _ = derive_key(pw, params, salt=salt)
+    k2, _ = derive_key(pw, params, salt=salt)
+    assert bytes(k1) == bytes(k2)
+
+
+def test_derive_key_rejects_wrong_salt_length() -> None:
+    params = Argon2Params(
+        time_cost=OWASP_MIN_TIME_COST,
+        memory_cost=OWASP_MIN_MEMORY_KIB,
+        parallelism=OWASP_MIN_PARALLELISM,
+        hash_len=32,
+    )
+    with pytest.raises(ValueError):
+        derive_key(SecretBytes(b"pw"), params, salt=b"\x00" * 4)
+
+
+def test_argon2_params_rejects_below_owasp_minimum() -> None:
+    """Public constructor must enforce OWASP minimums."""
+    with pytest.raises(Exception):  # pydantic ValidationError
+        Argon2Params(time_cost=1, memory_cost=8, parallelism=1, hash_len=32)
+
+
+def test_argon2_params_for_testing_bypasses_validation() -> None:
+    """The for_testing escape hatch must succeed for the RFC vector."""
+    p = Argon2Params.for_testing(time_cost=1, memory_cost=8, parallelism=1, hash_len=32)
+    assert p.time_cost == 1
+
+
+@pytest.mark.parametrize("vec", RFC9106_VECTORS, ids=lambda v: "rfc9106")
+def test_rfc9106_vector(vec) -> None:
+    """Argon2id must match the RFC 9106 § 5 test vector exactly."""
+    params = Argon2Params.for_testing(
+        time_cost=vec.time_cost,
+        memory_cost=vec.memory_cost,
+        parallelism=vec.parallelism,
+        hash_len=vec.hash_len,
+        salt_len=len(vec.salt),
+        version=0x13,
+    )
+    pw = SecretBytes(vec.password)
+    key, _ = derive_key(pw, params, salt=vec.salt)
+    assert bytes(key) == vec.expected
